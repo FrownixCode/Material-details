@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Universal Metal Calculator (MTO / BOM)</title>
+<style>
+* { box-sizing: border-box; }
+body { font-family: "Segoe UI", Arial, sans-serif; margin: 20px; background: #f5f7fa; color: #333; }
+h2, h3 { color: #2c3e50; }
+button { cursor: pointer; font-family: inherit; }
+
+.user-bar { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #64748b; margin-bottom: 6px; flex-wrap: wrap; }
+.mini-btn { padding: 3px 10px; font-size: 12px; background: #e2e8f0; border: 1px solid #cbd5e1; border-radius: 4px; }
+#adminPanel { display: none; align-items: center; gap: 6px; }
+
+.page-header { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin-bottom: 14px; }
+.title-wrap { display: flex; align-items: center; gap: 36px; }
+.title-wrap h2 { margin: 0; font-size: 26px; }
+.tpl-btn { padding: 10px 18px; background: #fff; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; box-shadow: 0 2px 6px rgba(0,0,0,.12); }
+.export-btn { padding: 10px 26px; font-size: 15px; font-weight: bold; background: #16a34a; border: 1px solid #15803d; border-radius: 8px; color: #fff; }
+.export-btn:hover { background: #15803d; }
+
+.page-content { display: none; }
+.page-content.active { display: block; }
+
+.form-container { display: flex; align-items: flex-end; gap: 14px; background: #fff; padding: 16px 18px 20px; border-radius: 6px; box-shadow: 0 2px 6px rgba(0,0,0,.06); margin-bottom: 22px; border: 1px solid #e2e8f0; }
+.form-container .form-group { flex: 1; min-width: 0; margin: 0; }
+.fg-id { flex: 1.7 !important; }
+.fg-sm { flex: .6 !important; }
+.fg-wide { flex: 1.5 !important; }
+.form-container label { display: block; margin-bottom: 6px; font-weight: 600; font-size: 12px; }
+.form-container input, .form-container select { width: 100%; height: 32px; padding: 4px 8px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 13px; }
+.add-btn { height: 32px; padding: 0 16px; background: #22c55e; color: #fff; border: none; border-radius: 4px; font-weight: bold; font-size: 12px; white-space: nowrap; }
+.add-btn:hover { background: #16a34a; }
+
+.primary-btn { padding: 9px 18px; background: #3b82f6; color: #fff; border: none; border-radius: 4px; font-weight: bold; margin-right: 6px; margin-bottom: 6px; }
+.edit-btn { background: #3b82f6; color: #fff; border: none; padding: 6px 12px; border-radius: 4px; margin-right: 5px; margin-bottom: 4px; }
+.delete-btn { background: #ef4444; color: #fff; border: none; padding: 6px 12px; border-radius: 4px; margin-bottom: 4px; }
+.info-box { padding: 12px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 5px; margin-bottom: 15px; }
+.warning-box { padding: 12px; background: #fff7ed; border: 1px solid #fed7aa; border-radius: 5px; margin-bottom: 15px; }
+.grade-chip { display: inline-block; background: #e2e8f0; border-radius: 12px; padding: 3px 6px 3px 10px; margin: 0 6px 4px 0; font-size: 13px; }
+.grade-chip button { border: none; background: none; color: #ef4444; font-weight: bold; }
+
+table { width: 100%; border-collapse: collapse; background: #fff; margin-bottom: 30px; }
+th, td { border: 1px solid #e2e8f0; padding: 12px 9px; text-align: left; font-size: 13px; }
+th { background: #f8fafc; color: #475569; font-weight: 600; text-align: center; }
+.total-row { font-weight: bold; background: #fef08a !important; }
+.database-actions { margin-bottom: 15px; }
+
+.modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); justify-content: center; align-items: center; z-index: 1000; overflow-y: auto; }
+.modal-content { background: #fff; padding: 25px; border-radius: 8px; width: 500px; max-width: 95%; box-shadow: 0 5px 15px rgba(0,0,0,.3); margin: 30px auto; }
+.modal-content h3 { margin-top: 0; }
+.modal-content .form-group { margin-bottom: 12px; }
+.modal-content label { display: block; margin-bottom: 5px; font-weight: 600; font-size: 13px; }
+.modal-content input, .modal-content select, .modal-content textarea { width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; }
+.modal-actions { text-align: right; margin-top: 20px; }
+.modal-actions button { padding: 8px 16px; border: none; border-radius: 4px; font-weight: bold; }
+.close-modal-btn { background: #94a3b8; color: #fff; }
+.save-modal-btn { background: #22c55e; color: #fff; margin-left: 10px; }
+.orange-box { background: #fff7ed; border: 1px solid #fed7aa; padding: 15px; border-radius: 5px; margin-top: 10px; margin-bottom: 15px; }
+.small-text { font-size: 12px; color: #64748b; }
+
+@media (max-width: 1100px) { .form-container { flex-wrap: wrap; } .form-container .form-group { flex: 1 1 150px; } }
+</style>
+</head>
+<body>
+
+<div class="user-bar">
+    <span>User:</span>
+    <strong id="roleStatus">User</strong>
+    <button class="mini-btn" onclick="openAdvanced()">Advanced</button>
+    <span id="adminPanel">
+        <button class="mini-btn" onclick="switchTab('database-page')">Material Database</button>
+        <button class="mini-btn" onclick="switchTab('mto-page')">Back to MTO</button>
+        <button class="mini-btn" onclick="logoutAdministrator()">Exit Administrator</button>
+    </span>
+</div>
+
+<div id="mto-page" class="page-content active">
+
+    <div class="page-header">
+        <div class="title-wrap">
+            <h2>MTO - Material Take Off</h2>
+            <button class="tpl-btn" onclick="openTemplateFromHeader()">Template Editor</button>
+        </div>
+        <button class="export-btn" onclick="exportToExcel()">&rarr; Export</button>
+    </div>
+
+    <div class="form-container">
+        <div class="form-group fg-id"><label for="idNumber">ID Number:</label>
+            <input type="text" id="idNumber" placeholder="e.g. DRG-001"></div>
+        <div class="form-group fg-sm"><label for="assyNo">Item Number:</label>
+            <select id="assyNo"></select></div>
+        <div class="form-group"><label for="itemType">Item Type:</label>
+            <select id="itemType" onchange="handleItemTypeChange('itemType','thickness','widthGroup')">
+                <option value="Profile">Profile</option>
+                <option value="Plate">Plate</option>
+                <option value="Fastener">Fastener</option>
+                <option value="Other">Non-Steel</option>
+            </select></div>
+        <div class="form-group fg-wide"><label for="thickness">Section / Thickness:</label>
+            <select id="thickness"></select></div>
+        <div class="form-group fg-sm"><label for="grade">Grade:</label>
+            <select id="grade"></select></div>
+        <div class="form-group" id="lengthGroup"><label for="length">Length (mm):</label>
+            <input type="number" id="length" min="1"></div>
+        <div class="form-group" id="widthGroup"><label for="width">Width (mm):</label>
+            <input type="number" id="width" min="1"></div>
+        <div class="form-group fg-sm"><label for="qty">Qty:</label>
+            <input type="number" id="qty" value="1" min="1" step="any"></div>
+        <div class="form-group"><label for="notes">Notes:</label>
+            <input type="text" id="notes" list="notesList" placeholder="e.g. SHAPED / SHIM"></div>
+        <button class="add-btn" onclick="addMaterial()">Add to List</button>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>ID Number</th><th>Item Number</th><th>Item Type</th>
+                <th>Section / Thickness</th><th>Grade</th><th>Length, mm</th>
+                <th>Width, mm</th><th>Qty</th><th>Calculated Weight, kg</th>
+                <th>Weight per Assembly, kg</th><th>Notes</th><th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+        <tfoot>
+            <tr class="total-row">
+                <td colspan="7">TOTAL:</td>
+                <td id="totalQty">0</td>
+                <td id="totalCalculatedWeight">0.00</td>
+                <td colspan="3"></td>
+            </tr>
+        </tfoot>
+    </table>
+</div>
+
+<div id="database-page" class="page-content">
+    <h2>Material Database</h2>
+    <div class="info-box">Administrator access is required.</div>
+    <div class="warning-box">Administrator mode: materials and grades can be added, edited and deleted.</div>
+    <div class="database-actions">
+        <button class="primary-btn" onclick="openMaterialDatabaseModal('Profile')">Add Profile</button>
+        <button class="primary-btn" onclick="openMaterialDatabaseModal('Plate')">Add Plate</button>
+        <button class="primary-btn" onclick="openMaterialDatabaseModal('Fastener')">Add Fastener</button>
+        <button class="primary-btn" onclick="openMaterialDatabaseModal('Other')">Add Non-Steel</button>
+        <button class="primary-btn" onclick="exportSettings()">Export settings</button>
+        <button class="primary-btn" onclick="document.getElementById('importFile').click()">Import settings</button>
+        <input type="file" id="importFile" accept=".json" style="display:none" onchange="importSettings(this)">
+    </div>
+
+    <h3>Grades</h3>
+    <div id="gradesBox" class="orange-box"></div>
+
+    <h3>Materials</h3>
+    <table>
+        <thead><tr><th>Type</th><th>Name</th><th>Weight / Unit</th><th>Unit</th><th>Actions</th></tr></thead>
+        <tbody id="materialDatabaseBody"></tbody>
+    </table>
+</div>
+
+<datalist id="notesList"></datalist>
+
+<div id="editModal" class="modal">
+    <div class="modal-content">
+        <h3>Edit Item Parameters</h3>
+        <div class="form-group"><label>ID Number</label><input type="text" id="editIdNumber"></div>
+        <div class="form-group"><label>Item Number</label><select id="editAssyNo"></select></div>
+        <div class="form-group"><label>Item Type</label>
+            <select id="editItemType" onchange="handleItemTypeChange('editItemType','editThickness','editWidthGroup')">
+                <option value="Profile">Profile</option>
+                <option value="Plate">Plate</option>
+                <option value="Fastener">Fastener</option>
+                <option value="Other">Non-Steel</option>
+            </select></div>
+        <div class="form-group"><label>Section / Thickness</label><select id="editThickness"></select></div>
+        <div class="form-group"><label>Grade</label><select id="editGrade"></select></div>
+        <div class="form-group" id="editLengthGroup"><label>Length (mm)</label><input type="number" id="editLength" min="1"></div>
+        <div class="form-group" id="editWidthGroup"><label>Width (mm)</label><input type="number" id="editWidth" min="1"></div>
+        <div class="form-group"><label>Qty</label><input type="number" id="editQty" min="1" step="any"></div>
+        <div class="form-group"><label>Notes</label>
+            <input type="text" id="editNotes" list="notesList" placeholder="e.g. SHAPED / SHIM"></div>
+        <div class="orange-box">
+            <label>Manual Calculated Weight (kg)</label>
+            <input type="number" id="editManualWeight" min="0" step="0.01">
+            <p class="small-text">Leave empty to use the automatically calculated weight.</p>
+        </div>
+        <div class="modal-actions">
+            <button class="close-modal-btn" onclick="closeEditModal()">Cancel</button>
+            <button class="save-modal-btn" onclick="saveEditedItem()">Save Changes</button>
+        </div>
+    </div>
+</div>
+
+<div id="materialDatabaseModal" class="modal">
+    <div class="modal-content">
+        <h3 id="materialDatabaseModalTitle">Add Material</h3>
+        <div class="form-group"><label>Material Type</label>
+            <select id="databaseMaterialType" disabled>
+                <option value="Profile">Profile</option>
+                <option value="Plate">Plate</option>
+                <option value="Fastener">Fastener</option>
+                <option value="Other">Non-Steel</option>
+            </select></div>
+        <div class="form-group"><label>Material Name</label>
+            <input id="databaseMaterialName" type="text"></div>
+        <div class="form-group"><label>Weight</label>
+            <input id="databaseMaterialWeight" type="number" min="0" step="0.001"></div>
+        <div class="form-group"><label>Unit</label>
+            <input id="databaseMaterialUnit" type="text" readonly></div>
+        <div class="form-group" id="databaseQtyUnitGroup"><label>Quantity unit</label>
+            <select id="databaseQtyUnit"><option>pcs</option><option>L</option><option>kg</option><option>m</option><option>m²</option></select></div>
+
+        <div id="databaseBulkBox" class="orange-box">
+            <label>Paste list (one per line: Name; weight)</label>
+            <textarea id="databaseBulkText" rows="6" placeholder="BELZONA 1311 - 1 Kg; 1&#10;NEOPRENE"></textarea>
+            <p class="small-text">Separator: ; or comma or Tab (works with text copied from Excel).<br>
+                Existing names are updated, new ones are added.<br>
+                Plate: thickness only (e.g. 12). Fastener: size only (e.g. M10).</p>
+            <input type="file" accept=".txt,.csv,.tsv,text/plain" onchange="loadBulkFile(this)">
+        </div>
+
+        <div class="modal-actions">
+            <button class="close-modal-btn" onclick="closeMaterialDatabaseModal()">Cancel</button>
+            <button class="save-modal-btn" onclick="saveMaterialDatabaseItem()">Save</button>
+        </div>
+    </div>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>
