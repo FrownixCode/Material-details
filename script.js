@@ -25,6 +25,8 @@ const newId = () => (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()
 const sameId = (a, b) => String(a) === String(b);
 const typeLabel = t => (t === "Other" ? "Non-Steel" : t);
 const findMaterial = (type, name) => materialsDatabase.find(m => m.type === type && m.name === name);
+/* убирает хвост "; -" / ";" / "\t-" из названия (остаток от списка вида "Название; вес") */
+const cleanName = s => String(s ?? "").replace(/\s*[;\t]\s*-?\s*$/, "").trim();
 
 function readStorage(key, fallback) {
     try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; }
@@ -45,6 +47,10 @@ function saveMaterials() {
 function loadApplicationData() {
     materialsDatabase = readStorage(STORAGE.db, null) || [];
     materialsList = readStorage(STORAGE.items, []);
+
+    /* чистим уже сохранённые названия вида "NEOPRENE; -" */
+    materialsDatabase.forEach(m => { m.name = cleanName(m.name); });
+    materialsList.forEach(i => { i.section = cleanName(i.section); });
 
     const savedGrades = readStorage(STORAGE.grades, null);
     Object.keys(DEFAULT_GRADES).forEach(t => {
@@ -437,6 +443,7 @@ function editDatabaseMaterial(id) {
 }
 
 function upsertMaterial(type, name, weight, qtyUnit) {
+    name = cleanName(name);
     const m = materialsDatabase.find(x => x.type === type && x.name.toLowerCase() === name.toLowerCase());
     if (m) {
         if (weight !== null) m.weight = weight;
@@ -453,11 +460,12 @@ function upsertMaterial(type, name, weight, qtyUnit) {
 
 function parseBulk(type, text) {
     return text.split(/\r?\n/).map(l => l.trim()).filter(Boolean).map(line => {
-        const m = line.match(/^(.+?)\s*[\t;,]\s*(\d+(?:[.,]\d+)?)\s*$/);
+        /* вес — число, либо "-" / пусто (тогда веса нет) */
+        const m = line.match(/^(.+?)\s*[\t;,]\s*(\d+(?:[.,]\d+)?|-)?\s*$/);
         let name = m ? m[1].trim() : line;
         if (type === "Plate" && /^[\d.]+$/.test(name)) name += " THK PLT";
         if (type === "Fastener") name = name.toUpperCase();
-        return { name, weight: m ? Number(m[2].replace(",", ".")) : null };
+        return { name, weight: m && m[2] && m[2] !== "-" ? Number(m[2].replace(",", ".")) : null };
     });
 }
 
