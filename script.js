@@ -1,4 +1,4 @@
-/* UNIVERSAL METAL CALCULATOR — MTO + Excel BOM export */
+ /* UNIVERSAL METAL CALCULATOR — MTO + Excel BOM export */
 
 /* ===== CONSTANTS ===== */
 /* База материалов пустая: она загружается через Material Database -> Import settings */
@@ -146,12 +146,10 @@ function handleItemTypeChange(typeId, sectionId, widthGroupId) {
         .map(m => `<option>${escapeHTML(m.name)}</option>`)
         .join("");
 
-    const isPlate = type === "Plate";
-    $(widthGroupId).style.display = isPlate ? "" : "none";
-    if (!isPlate) $(widthGroupId.replace("Group", "")).value = "";
-
-    $(isEdit ? "editLengthGroup" : "lengthGroup").style.display = type === "Other" ? "none" : "";
-    if (type === "Other") $(isEdit ? "editLength" : "length").value = "";
+        const showWidth = type === "Plate" || type === "Other";
+    $(widthGroupId).style.display = showWidth ? "" : "none";
+    if (!showWidth) $(widthGroupId.replace("Group", "")).value = "";
+    $(isEdit ? "editLengthGroup" : "lengthGroup").style.display = "";
 
     const gradeId = isEdit ? "editGrade" : "grade";
     const current = $(gradeId).value;
@@ -229,7 +227,7 @@ const formatQty = item => { const u = qtyUnitOf(item); return u === "pcs" ? item
 const spaceDimensions = s => String(s).replace(/(\d)\s*[xX]\s*(?=\d)/g, "$1 x ");
 
 function getBOMDescription(item) {
-    if (isAccessory(item)) return spaceDimensions([item.section, item.notes].filter(Boolean).join(" "));
+    if (isAccessory(item)) return spaceDimensions([item.section, item.notes, item.width ? `(W: ${item.width} mm)` : ""].filter(Boolean).join(" "));
     if (item.itemType === "Plate") {
         const t = String(item.section).match(/[\d.]+/)?.[0];
         return spaceDimensions(item.width && t ? `${item.width}x${t} THK PLT` : item.section);
@@ -251,13 +249,17 @@ function readItemForm(ids) {
         !v.idNumber ? "Please enter ID Number." :
         !v.section ? "No materials of this type in the database. Load them via Advanced -> Material Database -> Import settings." :
         !other && !(length > 0) ? "Please enter a valid length." :
+        other && v.length !== "" && !(length > 0) ? "Please enter a valid length." :
         !(qty > 0) ? "Please enter a valid quantity." :
-        plate && !(width > 0) ? "Please enter a valid width for Plate." : "";
+        plate && !(width > 0) ? "Please enter a valid width for Plate." :
+        other && v.width !== "" && !(width > 0) ? "Please enter a valid width." : "";
     if (error) { alert(error); return null; }
 
     return {
-        ...v, length: other ? null : length, qty,
-        width: plate ? width : null,
+        ...v,
+        length: other && v.length === "" ? null : length,
+        qty,
+        width: plate || (other && v.width !== "") ? width : null,
         calculatedWeight: calculateCalculatedWeight(v.itemType, v.section, other ? 0 : length, width, qty)
     };
 }
