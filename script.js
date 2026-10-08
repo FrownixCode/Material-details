@@ -1,4 +1,4 @@
- /* UNIVERSAL METAL CALCULATOR — MTO + Excel BOM export */
+/* UNIVERSAL METAL CALCULATOR — MTO + Excel BOM export */
 
 /* ===== CONSTANTS ===== */
 /* База материалов пустая: она загружается через Material Database -> Import settings */
@@ -9,11 +9,22 @@ const DEFAULT_GRADES = {
     Fastener: ["8.8", "10.9"],
     Other: ["-"]
 };
+const DEFAULT_NOTES = {
+    Profile: ["SHAPED", "SHIM"],
+    Plate: ["SHAPED", "SHIM"],
+    Fastener: ["SETSCREW FIXING SET", "STUD BOLT SET"]
+};
 const ADMIN_PASSWORD = "Metalcalc01";
-const STORAGE = { db: "metalCalculatorDatabase", items: "metalCalculatorMaterials", grades: "metalCalculatorGrades" };
+const STORAGE = {
+    db: "metalCalculatorDatabase",
+    items: "metalCalculatorMaterials",
+    grades: "metalCalculatorGrades",
+    notes: "metalCalculatorNotes"
+};
+const MERGE_IDS = true; /* true — одинаковые ID подряд объединяются в одну ячейку */
 
 /* ===== STATE / HELPERS ===== */
-let materialsDatabase = [], materialsList = [], gradeList = {};
+let materialsDatabase = [], materialsList = [], gradeList = {}, noteList = {};
 let editingId = null, editingDatabaseId = null, isAdministrator = false;
 let assemblyCache = null;
 
@@ -39,6 +50,7 @@ function save(key, value) {
 
 const saveDatabase = () => save(STORAGE.db, materialsDatabase);
 const saveGrades = () => save(STORAGE.grades, gradeList);
+const saveNotes = () => save(STORAGE.notes, noteList);
 function saveMaterials() {
     assemblyCache = null;
     save(STORAGE.items, materialsList);
@@ -56,6 +68,8 @@ function loadApplicationData() {
     Object.keys(DEFAULT_GRADES).forEach(t => {
         gradeList[t] = Array.isArray(savedGrades?.[t]) && savedGrades[t].length ? savedGrades[t] : [...DEFAULT_GRADES[t]];
     });
+
+    noteList = readStorage(STORAGE.notes, null) || JSON.parse(JSON.stringify(DEFAULT_NOTES));
 }
 
 /* Поставить значение в <select>; если такой опции уже нет (удалён грейд/материал) — добавить её временно */
@@ -73,30 +87,29 @@ function setAdminUI(on) {
     $("roleStatus").textContent = on ? "Administrator" : "User";
 }
 
-/* Окно ввода пароля: символы скрыты (type="password") */
+/* Окно ввода пароля: символы скрыты (type="password"), поле внутри формы */
 function askPassword() {
     return new Promise(resolve => {
         const o = document.createElement("div");
         o.style.cssText = "position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center";
         o.innerHTML = `
-            <div style="background:#fff;padding:22px;border-radius:8px;width:320px;max-width:95%;box-shadow:0 5px 15px rgba(0,0,0,.3)">
+            <form style="background:#fff;padding:22px;border-radius:8px;width:320px;max-width:95%;box-shadow:0 5px 15px rgba(0,0,0,.3)">
                 <h3 style="margin:0 0 12px">Administrator password</h3>
-                <input type="password" autocomplete="new-password" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:4px">
+                <input type="text" name="username" value="admin" autocomplete="username" hidden>
+                <label for="adminPassword" style="position:absolute;left:-9999px">Password</label>
+                <input id="adminPassword" name="password" type="password" autocomplete="off" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:4px">
                 <div style="text-align:right;margin-top:16px">
-                    <button data-cancel style="padding:7px 14px;border:none;border-radius:4px;background:#94a3b8;color:#fff;font-weight:bold">Cancel</button>
-                    <button data-ok style="padding:7px 14px;border:none;border-radius:4px;background:#22c55e;color:#fff;font-weight:bold;margin-left:8px">OK</button>
+                    <button type="button" data-cancel style="padding:7px 14px;border:none;border-radius:4px;background:#94a3b8;color:#fff;font-weight:bold">Cancel</button>
+                    <button type="submit" style="padding:7px 14px;border:none;border-radius:4px;background:#22c55e;color:#fff;font-weight:bold;margin-left:8px">OK</button>
                 </div>
-            </div>`;
+            </form>`;
         document.body.appendChild(o);
 
-        const input = o.querySelector("input");
+        const input = o.querySelector("#adminPassword");
         const done = v => { o.remove(); resolve(v); };
-        o.querySelector("[data-ok]").onclick = () => done(input.value);
+        o.querySelector("form").addEventListener("submit", e => { e.preventDefault(); done(input.value); });
         o.querySelector("[data-cancel]").onclick = () => done(null);
-        input.addEventListener("keydown", e => {
-            if (e.key === "Enter") done(input.value);
-            if (e.key === "Escape") done(null);
-        });
+        input.addEventListener("keydown", e => { if (e.key === "Escape") done(null); });
         input.focus();
     });
 }
@@ -146,7 +159,8 @@ function handleItemTypeChange(typeId, sectionId, widthGroupId) {
         .map(m => `<option>${escapeHTML(m.name)}</option>`)
         .join("");
 
-        const showWidth = type === "Plate" || type === "Other";
+    /* ширина: для Plate и Non-Steel; длина: для всех типов */
+    const showWidth = type === "Plate" || type === "Other";
     $(widthGroupId).style.display = showWidth ? "" : "none";
     if (!showWidth) $(widthGroupId.replace("Group", "")).value = "";
     $(isEdit ? "editLengthGroup" : "lengthGroup").style.display = "";
@@ -157,8 +171,7 @@ function handleItemTypeChange(typeId, sectionId, widthGroupId) {
     $(gradeId).innerHTML = grades.map(g => `<option>${escapeHTML(g)}</option>`).join("");
     if (grades.includes(current)) $(gradeId).value = current;
 
-    const hints = type === "Fastener" ? ["SETSCREW FIXING SET", "STUD BOLT SET"] : type === "Other" ? [] : ["SHAPED", "SHIM"];
-    $("notesList").innerHTML = hints.map(h => `<option value="${h}">`).join("");
+    setNoteHints(typeId, sectionId);
 }
 
 function refreshSelects() {
@@ -180,6 +193,15 @@ function calculateCalculatedWeight(type, section, length, width, qty) {
         return (L / 1000) * (W / 1000) * (t / 1000) * k * Q;
     }
     return k * Q;
+}
+
+/* Пересчёт авто-весов после изменения базы (ручные веса и позиции без материала в базе не трогаются) */
+function recalcAllWeights() {
+    materialsList.forEach(i => {
+        if (!findMaterial(i.itemType, i.section)) return;
+        i.calculatedWeight = calculateCalculatedWeight(i.itemType, i.section, i.length ?? 0, i.width, i.qty);
+    });
+    saveMaterials();
 }
 
 function getWeight(item) {
@@ -227,7 +249,9 @@ const formatQty = item => { const u = qtyUnitOf(item); return u === "pcs" ? item
 const spaceDimensions = s => String(s).replace(/(\d)\s*[xX]\s*(?=\d)/g, "$1 x ");
 
 function getBOMDescription(item) {
-    if (isAccessory(item)) return spaceDimensions([item.section, item.notes, item.width ? `(W: ${item.width} mm)` : ""].filter(Boolean).join(" "));
+    if (isAccessory(item)) {
+        return spaceDimensions([item.section, item.notes, item.width ? `(W: ${item.width} mm)` : ""].filter(Boolean).join(" "));
+    }
     if (item.itemType === "Plate") {
         const t = String(item.section).match(/[\d.]+/)?.[0];
         return spaceDimensions(item.width && t ? `${item.width}x${t} THK PLT` : item.section);
@@ -386,6 +410,8 @@ function renderGrades() {
             <input id="newGrade_${type}" placeholder="new grade" style="width:130px;height:28px;padding:2px 6px">
             <button class="primary-btn" style="padding:4px 12px;margin:0" data-act="addGrade" data-type="${type}">Add</button>
         </div>`).join("");
+
+    renderNotes();
 }
 
 function addGrade(type) {
@@ -412,6 +438,59 @@ function deleteGrade(type, grade) {
     saveGrades();
     refreshSelects();
     renderGrades();
+}
+
+/* ===== NOTES ===== */
+/* Profile / Plate / Fastener: заметки по типу. Non-Steel: заметки отдельно для каждого материала */
+const noteKey = (type, name) => (type === "Other" ? `Other::${name}` : type);
+
+function setNoteHints(typeId, sectionId) {
+    const list = noteList[noteKey($(typeId).value, $(sectionId).value)] || [];
+    $("notesList").innerHTML = list.map(n => `<option value="${escapeHTML(n)}">`).join("");
+}
+
+function renderNotes() {
+    let box = $("notesBox");
+    if (!box) {
+        const h = document.createElement("h3");
+        h.textContent = "Notes";
+        box = document.createElement("div");
+        box.id = "notesBox";
+        box.className = "orange-box";
+        $("gradesBox").after(h, box);
+    }
+
+    const row = (label, key, id) => `
+        <div style="margin-bottom:8px"><strong>${escapeHTML(label)}:</strong>
+            ${(noteList[key] || []).map(n => `<span class="grade-chip">${escapeHTML(n)}
+                <button data-act="deleteNote" data-key="${escapeHTML(key)}" data-note="${escapeHTML(n)}">✕</button></span>`).join("")}
+            <input id="newNote_${id}" placeholder="new note" style="width:170px;height:28px;padding:2px 6px">
+            <button class="primary-btn" style="padding:4px 12px;margin:0" data-act="addNote" data-key="${escapeHTML(key)}" data-input="newNote_${id}">Add</button>
+        </div>`;
+
+    const others = materialsDatabase.filter(m => m.type === "Other").sort((a, b) => cmp(a.name, b.name));
+
+    box.innerHTML = ["Profile", "Plate", "Fastener"].map(t => row(t, t, t)).join("")
+        + `<div style="margin-top:12px"><strong>Non-Steel:</strong></div>`
+        + others.map((m, i) => row(m.name, noteKey("Other", m.name), "O" + i)).join("");
+}
+
+function addNote(key, inputId) {
+    if (!isAdministrator) return;
+    const note = $(inputId).value.trim();
+    if (!note) return;
+    const list = (noteList[key] ??= []);
+    if (list.some(n => n.toLowerCase() === note.toLowerCase())) return alert("This note already exists.");
+    list.push(note);
+    saveNotes();
+    renderNotes();
+}
+
+function deleteNote(key, note) {
+    if (!isAdministrator) return;
+    noteList[key] = (noteList[key] || []).filter(n => n !== note);
+    saveNotes();
+    renderNotes();
 }
 
 /* ===== MATERIAL DATABASE MODAL ===== */
@@ -507,6 +586,7 @@ function saveMaterialDatabaseItem() {
     }
 
     saveDatabase();
+    recalcAllWeights();
     closeMaterialDatabaseModal();
     refreshSelects();
     renderEverything();
@@ -516,6 +596,7 @@ function deleteDatabaseMaterial(id) {
     const m = isAdministrator && materialsDatabase.find(x => sameId(x.id, id));
     if (!m || !confirm(`Delete "${m.name}" from the material database?`)) return;
     materialsDatabase = materialsDatabase.filter(x => !sameId(x.id, id));
+    if (m.type === "Other") { delete noteList[noteKey("Other", m.name)]; saveNotes(); }
     saveDatabase();
     refreshSelects();
     renderEverything();
@@ -529,9 +610,10 @@ function closeMaterialDatabaseModal() {
 /* ===== EXPORT / IMPORT SETTINGS ===== */
 function exportSettings() {
     const data = {
-        version: 2,
+        version: 3,
         materials: materialsDatabase,
         grades: gradeList,
+        notes: noteList,
         template: readStorage(REPORT_TEMPLATE_KEY, null)
     };
 
@@ -563,6 +645,7 @@ function importSettings(input) {
                 upsertMaterial(m.type, String(m.name), Number.isFinite(w) ? w : null, m.qtyUnit) === "added" ? added++ : updated++;
             });
             saveDatabase();
+            recalcAllWeights();
 
             if (data.grades) {
                 Object.keys(DEFAULT_GRADES).forEach(t => {
@@ -571,7 +654,16 @@ function importSettings(input) {
                 saveGrades();
             }
 
-            if (data.template && confirm("Also replace the report template with the one from the file?")) {
+            if (data.notes) {
+                Object.entries(data.notes).forEach(([k, list]) => {
+                    const cur = (noteList[k] ??= []);
+                    (list || []).forEach(n => { if (!cur.includes(n)) cur.push(n); });
+                });
+                saveNotes();
+            }
+
+            /* шаблон подходит только если он той же версии, что и текущий формат отчёта */
+            if (data.template && data.template.version === 6 && confirm("Also replace the report template with the one from the file?")) {
                 reportTemplate = data.template;
                 saveReportTemplate();
             }
@@ -591,13 +683,11 @@ function importSettings(input) {
 /* =========================================================
    REPORT TEMPLATE
 ========================================================= */
-const REPORT_TEMPLATE_KEY = "metalCalculatorExcelTemplateV5";
-const TABLE_PLACEHOLDERS = ["BOM_FABRICATED_TABLE", "BOM_LOOSE_TABLE"];
+const REPORT_TEMPLATE_KEY = "metalCalculatorExcelTemplateV6";
+const TABLE_PLACEHOLDERS = ["BOM_TABLE"];
 const PLACEHOLDER_LABELS = {
     COMPANY: "Company", PROJECT: "Project", DOCUMENT_NUMBER: "Document Number", TITLE: "Title", REVISION: "Revision", DATE: "Date",
-    PREPARED: "Prepared", CHECKED: "Checked", APPROVED: "Approved", TOTAL_WEIGHT: "Total Weight",
-    TOTAL_FAB: "Total (fabricated)", TOTAL_LOOSE: "Total (loose)",
-    BOM_FABRICATED_TABLE: "Fabricated BOM", BOM_LOOSE_TABLE: "Loose BOM"
+    PREPARED: "Prepared", CHECKED: "Checked", APPROVED: "Approved", TOTAL_WEIGHT: "Total Weight", BOM_TABLE: "BOM table"
 };
 const DOC_FIELDS = [["company", "Company"], ["project", "Project"], ["documentNumber", "Document Number"], ["title", "Title"],
     ["revision", "Revision"], ["date", "Date"], ["prepared", "Prepared"], ["checked", "Checked"], ["approved", "Approved"]];
@@ -612,53 +702,33 @@ const cellAt = (t, row, col) => t.cells[`${row}:${col}`] || defaultCell();
 const cellEdit = (t, row, col) => (t.cells[`${row}:${col}`] ??= defaultCell());
 
 function createDefaultReportTemplate() {
-    const columns = 16, rows = 42;
+    const columns = 6, rows = 29;
     const cells = {}, columnWidths = {}, rowHeights = {};
 
-    [26, 6, 34, 9, 10, 10, 3, 26, 6, 34, 9, 10, 10, 3, 22, 40].forEach((w, i) => { columnWidths[i + 1] = w; });
-    for (let r = 1; r <= rows; r++) rowHeights[r] = 20;
-    rowHeights[2] = 32;
-    rowHeights[32] = 90;
+    [30, 6, 54, 10, 10, 10].forEach((w, i) => { columnWidths[i + 1] = w; });
+    for (let r = 1; r <= rows; r++) rowHeights[r] = 18;
+    rowHeights[1] = 24;
 
-    const set = (r, c, value, style = {}) => { cells[`${r}:${c}`] = { ...defaultCell(), border: true, value, ...style }; };
-    const heads = ["ITEM ID No.", "QTY", "DESCRIPTION", "LENGTH", "GRD", "WT (kg)"];
+    const set = (r, c, value, style = {}) => {
+        cells[`${r}:${c}`] = { ...defaultCell(), border: true, align: "center", fontSize: 9, value, ...style };
+    };
 
-    [1, 8].forEach((c0, k) => {
-        set(1, c0, k ? "SHIPPED LOOSE ITEMS" : "MATERIAL LIST FOR FABRICATED ASSEMBLIES", { bold: true, fontSize: 11, align: "center", fill: "#D9E2F3" });
-        heads.forEach((h, i) => set(2, c0 + i, h, { bold: true, fontSize: 8, align: "center", fill: "#D9E2F3" }));
-        set(3, c0, k ? "{{BOM_LOOSE_TABLE}}" : "{{BOM_FABRICATED_TABLE}}", { fontSize: 8 });
-        set(30, c0, "TOTAL WEIGHT (kg) =", { bold: true });
-        set(30, c0 + 5, k ? "{{TOTAL_LOOSE}}" : "{{TOTAL_FAB}}", { bold: true, align: "center" });
-    });
+    set(1, 1, "MATERIAL LIST FOR SHIPPED ASSEMBLIES AND LOOSE ITEMS", { bold: true, fontSize: 14 });
+    ["ITEM ID No", "QTY", "DESCRIPTION", "LENGTH", "GRD", "WT (kg)"].forEach((h, i) => set(2, i + 1, h, { bold: true }));
+    set(3, 1, "{{BOM_TABLE}}", { border: false });
 
-    [
-        ["COMPANY:", "{{COMPANY}}"],
-        ["NOTE:", "ALL QUANTITIES ARE EXACT. ALL SIZES & LENGTHS ARE EXACT U.N.O. NO WELD GAPS OR ROLLING TOLERANCES CONSIDERED."],
-        ["TOTAL WEIGHT (kg) =", "{{TOTAL_WEIGHT}}"],
-        ["PROJECT:", "{{PROJECT}}"],
-        ["TITLE:", "{{TITLE}}"],
-        ["PD&MS DRG. No:", "{{DOCUMENT_NUMBER}}"],
-        ["REV:", "{{REVISION}}"],
-        ["DATE:", "{{DATE}}"],
-        ["DRWN:", "{{PREPARED}}"],
-        ["CHKD:", "{{CHECKED}}"],
-        ["APPD:", "{{APPROVED}}"]
-    ].forEach(([label, value], i) => {
-        set(31 + i, 15, label, { bold: true });
-        set(31 + i, 16, value);
-    });
+    for (let c = 1; c <= 6; c++) set(29, c, "");
+    set(29, 3, "TOTAL WEIGHT (kg) =", { bold: true });
+    set(29, 6, "{{TOTAL_WEIGHT}}", { bold: true });
 
     return {
-        rows, columns, cells, columnWidths, rowHeights,
-        merges: [
-            { startRow: 1, startCol: 1, endRow: 1, endCol: 6 },
-            { startRow: 1, startCol: 8, endRow: 1, endCol: 13 }
-        ],
+        version: 6, rows, columns, cells, columnWidths, rowHeights,
+        merges: [{ startRow: 1, startCol: 1, endRow: 1, endCol: 6 }],
         metadata: {
             company: "", project: "", documentNumber: "", title: "BILL OF MATERIALS", revision: "A",
             date: new Date().toISOString().slice(0, 10), prepared: "", checked: "", approved: ""
         },
-        page: { paper: "A3", orientation: "landscape", repeatRows: 2 }
+        page: { paper: "A4", orientation: "portrait", repeatRows: 2 }
     };
 }
 
@@ -681,11 +751,10 @@ function saveReportTemplate() {
 /* Итоги возвращаются числами, чтобы в Excel их можно было суммировать */
 function reportPlaceholderValue(name) {
     const m = reportTemplate.metadata;
-    const total = f => Number(materialsList.filter(f).reduce((s, i) => s + getWeight(i), 0).toFixed(3));
     const values = {
         COMPANY: m.company, PROJECT: m.project, DOCUMENT_NUMBER: m.documentNumber, TITLE: m.title,
         REVISION: m.revision, DATE: m.date, PREPARED: m.prepared, CHECKED: m.checked, APPROVED: m.approved,
-        TOTAL_WEIGHT: total(() => true), TOTAL_FAB: total(i => !isLooseItem(i)), TOTAL_LOOSE: total(i => isLooseItem(i))
+        TOTAL_WEIGHT: Number(materialsList.reduce((s, i) => s + getWeight(i), 0).toFixed(3))
     };
     return values[name] ?? "";
 }
@@ -770,8 +839,8 @@ function openTemplateEditor() {
     createTemplateEditor();
 
     DOC_FIELDS.forEach(([k]) => { $("tpl_" + k).value = reportTemplate.metadata[k] || ""; });
-    $("tplPaper").value = reportTemplate.page.paper || "A3";
-    $("tplOrient").value = reportTemplate.page.orientation || "landscape";
+    $("tplPaper").value = reportTemplate.page.paper || "A4";
+    $("tplOrient").value = reportTemplate.page.orientation || "portrait";
 
     renderTemplateEditorGrid();
     $("tplOverlay").style.display = "flex";
@@ -1014,12 +1083,12 @@ function findPlaceholder(name) {
     return null;
 }
 
-/* Одинаковые ID подряд объединяются в одну ячейку */
+/* Таблица BOM: одинаковые ID подряд объединяются в одну ячейку (MERGE_IDS) */
 function writeBOMBlock(ws, row, col, items) {
     let runStart = row, prevId = null;
 
     const closeRun = endRow => {
-        if (prevId !== null && endRow > runStart) {
+        if (MERGE_IDS && prevId !== null && endRow > runStart) {
             ws.mergeCells(runStart, col, endRow, col);
             ws.getCell(runStart, col).alignment = { horizontal: "center", vertical: "middle", wrapText: true };
         }
@@ -1027,12 +1096,7 @@ function writeBOMBlock(ws, row, col, items) {
 
     items.forEach(item => {
         const id = getCombinedId(item);
-
-        if (id !== prevId) {
-            closeRun(row - 1);
-            runStart = row;
-            prevId = id;
-        }
+        if (id !== prevId) { closeRun(row - 1); runStart = row; prevId = id; }
 
         const w = getWeight(item);
         const desc = getBOMDescription(item) + (item.itemType === "Plate" && isShaped(item) ? " (SHAPED)" : "");
@@ -1041,8 +1105,9 @@ function writeBOMBlock(ws, row, col, items) {
         values.forEach((v, i) => {
             const cell = ws.getCell(row, col + i);
             cell.value = v;
-            styleCell(cell, { size: 8, align: i === 2 ? "left" : "center" });
+            styleCell(cell, { size: 9, align: "center" });
         });
+        ws.getRow(row).height = Math.max(18, 13 * Math.ceil(desc.length / 55) + 4);
         row++;
     });
 
@@ -1051,30 +1116,28 @@ function writeBOMBlock(ws, row, col, items) {
 
 function createReportWorksheet(wb) {
     const t = reportTemplate, ws = wb.addWorksheet("BOM Report");
-    const pos = Object.fromEntries(TABLE_PLACEHOLDERS.map(n => [n, findPlaceholder(n)]));
-    const fab = sortedItems().filter(i => !isLooseItem(i));
-    const loose = sortedItems().filter(i => isLooseItem(i));
+    const pos = findPlaceholder("BOM_TABLE");
+    const all = sortedItems();
+    const items = [...all.filter(i => !isLooseItem(i)), ...all.filter(i => isLooseItem(i))];
 
-    /* если позиций много, всё, что ниже таблиц, сдвигается вниз */
-    const tableRow = Math.min(...Object.values(pos).filter(Boolean).map(p => p.row));
+    /* если позиций много, всё, что ниже таблицы (TOTAL), сдвигается вниз */
     let from = Infinity, extra = 0;
-
-    if (Number.isFinite(tableRow)) {
+    if (pos) {
         const below = Object.keys(t.cells)
             .map(k => k.split(":").map(Number))
-            .filter(([r, c]) => r > tableRow && String(t.cells[`${r}:${c}`].value || "").trim() !== "")
+            .filter(([r, c]) => r > pos.row && String(t.cells[`${r}:${c}`].value || "").trim() !== "")
             .map(([r]) => r);
 
         if (below.length) {
             from = Math.min(...below);
-            extra = Math.max(0, tableRow + Math.max(fab.length, loose.length) + 1 - from);
+            extra = Math.max(0, pos.row + items.length + 1 - from);
         }
     }
     const mapRow = r => (r >= from ? r + extra : r);
 
     for (let c = 1; c <= t.columns; c++) ws.getColumn(c).width = t.columnWidths[c] || 12;
-    for (let r = 1; r <= t.rows + extra; r++) ws.getRow(r).height = 20;
-    for (let r = 1; r <= t.rows; r++) ws.getRow(mapRow(r)).height = t.rowHeights[r] || 20;
+    for (let r = 1; r <= t.rows + extra; r++) ws.getRow(r).height = 18;
+    for (let r = 1; r <= t.rows; r++) ws.getRow(mapRow(r)).height = t.rowHeights[r] || 18;
 
     for (let r = 1; r <= t.rows; r++) {
         for (let c = 1; c <= t.columns; c++) {
@@ -1094,18 +1157,17 @@ function createReportWorksheet(wb) {
     }
 
     t.merges.forEach(m => {
-        if (Object.values(pos).some(p => p && p.row === m.startRow && p.col === m.startCol)) return;
+        if (pos && pos.row === m.startRow && pos.col === m.startCol) return;
         try { ws.mergeCells(mapRow(m.startRow), m.startCol, mapRow(m.endRow), m.endCol); }
         catch (e) { console.warn("Could not merge", m, e); }
     });
 
-    if (pos.BOM_FABRICATED_TABLE) writeBOMBlock(ws, pos.BOM_FABRICATED_TABLE.row, pos.BOM_FABRICATED_TABLE.col, fab);
-    if (pos.BOM_LOOSE_TABLE) writeBOMBlock(ws, pos.BOM_LOOSE_TABLE.row, pos.BOM_LOOSE_TABLE.col, loose);
+    if (pos) writeBOMBlock(ws, pos.row, pos.col, items);
 
     const repeat = Number(t.page.repeatRows) || 0;
     ws.pageSetup = {
-        paperSize: t.page.paper === "A4" ? 9 : 8,
-        orientation: t.page.orientation === "portrait" ? "portrait" : "landscape",
+        paperSize: t.page.paper === "A3" ? 8 : 9,
+        orientation: t.page.orientation === "landscape" ? "landscape" : "portrait",
         fitToPage: true, fitToWidth: 1, fitToHeight: 0,
         margins: { left: .25, right: .25, top: .4, bottom: .4, header: .2, footer: .2 },
         printArea: `A1:${getExcelColumnName(t.columns)}${t.rows + extra}`,
@@ -1149,15 +1211,6 @@ function createMaterialListWorksheet(wb) {
         [18, 34, 12, 10, 22, 14]);
 }
 
-function createMTOWorksheet(wb) {
-    sheetTable(wb.addWorksheet("MTO"),
-        ["ID No.", "ITEM No.", "ITEM TYPE", "SECTION", "GRADE", "LENGTH", "WIDTH", "QTY", "CALCULATED WEIGHT", "FINAL WEIGHT", "NOTES"],
-        sortedItems().map(i => [i.idNumber, i.assyNo, typeLabel(i.itemType), i.section, i.grade,
-            i.length ?? "", i.width ?? "", formatQty(i),
-            Number(Number(i.calculatedWeight || 0).toFixed(2)), Number(getWeight(i).toFixed(2)), i.notes || ""]),
-        [26, 10, 12, 30, 10, 10, 10, 10, 18, 14, 24]);
-}
-
 async function saveWorkbook(wb, fileName) {
     const buffer = await wb.xlsx.writeBuffer();
     const type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -1197,7 +1250,6 @@ async function exportToExcel() {
 
         createReportWorksheet(wb);
         createMaterialListWorksheet(wb);
-        createMTOWorksheet(wb);
 
         const doc = String(reportTemplate.metadata.documentNumber || "REPORT").replace(/[<>:"/\\|?*]/g, "_");
         const name = `Universal_Metal_Calculator_${doc}_${new Date().toISOString().slice(0, 10)}.xlsx`;
@@ -1213,7 +1265,9 @@ async function exportToExcel() {
 const ACTIONS = {
     editMaterial, deleteMaterial, editDatabaseMaterial, deleteDatabaseMaterial,
     addGrade: (_, b) => addGrade(b.dataset.type),
-    deleteGrade: (_, b) => deleteGrade(b.dataset.type, b.dataset.grade)
+    deleteGrade: (_, b) => deleteGrade(b.dataset.type, b.dataset.grade),
+    addNote: (_, b) => addNote(b.dataset.key, b.dataset.input),
+    deleteNote: (_, b) => deleteNote(b.dataset.key, b.dataset.note)
 };
 
 document.addEventListener("click", e => {
@@ -1221,11 +1275,49 @@ document.addEventListener("click", e => {
     if (b) ACTIONS[b.dataset.act]?.(b.dataset.id, b);
 });
 
+/* ===== FORM ACCESSIBILITY (убирает предупреждения DevTools: label/for, name, autocomplete) ===== */
+let fieldCounter = 0;
+
+function fixFormFields(root = document) {
+    root.querySelectorAll("input, select, textarea").forEach(el => {
+        if (!el.id) el.id = "field_" + (++fieldCounter);
+        if (!el.name) el.name = el.id;
+        if (el.type !== "password" && el.type !== "file" && !el.hasAttribute("autocomplete")) el.autocomplete = "off";
+        if (el.type === "file" && !el.getAttribute("aria-label")) el.setAttribute("aria-label", "Choose file");
+    });
+
+    /* привязка подписей: поле внутри подписи, следующее за ней, либо рядом в том же блоке */
+    root.querySelectorAll("label:not([for])").forEach(label => {
+        const next = label.nextElementSibling;
+        const field = label.querySelector("input, select, textarea")
+            || (next && next.matches("input, select, textarea") ? next : null)
+            || label.parentElement?.querySelector("input, select, textarea");
+        if (field) label.htmlFor = field.id;
+    });
+
+    /* поля без видимой подписи (новые грейды и заметки) */
+    root.querySelectorAll("input:not([aria-label]), select:not([aria-label])").forEach(el => {
+        if (!el.labels || !el.labels.length) el.setAttribute("aria-label", el.placeholder || el.name || "field");
+    });
+}
+
 /* ===== START ===== */
 function startApplication() {
     loadApplicationData();
     initializeAssyNumbers();
     refreshSelects();
+
+    /* подсказки Notes обновляются при выборе материала и при фокусе на поле */
+    [["notes", "itemType", "thickness"], ["editNotes", "editItemType", "editThickness"]].forEach(([n, t, s]) => {
+        $(n).addEventListener("focus", () => setNoteHints(t, s));
+        $(s).addEventListener("change", () => setNoteHints(t, s));
+    });
+
+    fixFormFields();
+    new MutationObserver(list => {
+        list.forEach(m => m.addedNodes.forEach(n => { if (n.nodeType === 1) fixFormFields(n); }));
+    }).observe(document.body, { childList: true, subtree: true });
+
     renderEverything();
 }
 
